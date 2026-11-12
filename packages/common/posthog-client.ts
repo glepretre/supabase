@@ -67,6 +67,7 @@ class PostHogClient {
   private readonly maxPendingEvents = MAX_PENDING_EVENTS
   private devListeners: Set<ClientTelemetryListener> = new Set()
   private pendingFeatureFlagCallbacks: Set<() => void> = new Set()
+  private optedOut = false
 
   constructor(config: PostHogClientConfig = {}) {
     const apiHost =
@@ -95,6 +96,7 @@ class PostHogClient {
       autocapture: false, // We'll manually track events
       capture_pageview: false, // We'll manually track pageviews
       capture_pageleave: false, // We'll manually track page leaves
+      opt_out_persistence_by_default: true,
       ...buildSessionRecordingConfig(sessionReplay),
       // Not posthog.register(): super properties persist in localStorage shared by every
       // supabase.com app, so events sent before register() runs carry the last app's value.
@@ -104,6 +106,10 @@ class PostHogClient {
         return event
       },
       loaded: (posthog) => {
+        // init() only runs with consent. Clear an earlier opt-out before the flushes below,
+        // which capture() would otherwise drop.
+        this.optIn()
+
         // Apply pending properties that were set before PostHog
         // initialized due to poor connection or user not accepting
         // consent right away
@@ -149,8 +155,6 @@ class PostHogClient {
 
     this.initStarted = true
     posthog.init(this.config.apiKey, config)
-    // init() only runs with consent, so clear any opt-out left by an earlier revoke
-    this.optIn()
 
     // Register any feature flag callbacks that were queued before init
     this.pendingFeatureFlagCallbacks.forEach((cb) => posthog.onFeatureFlags(cb))
@@ -244,24 +248,20 @@ class PostHogClient {
 
     try {
       posthog.reset()
+      // posthog.reset() clears the stored opt-out, so a sign-out would otherwise resume capture
+      if (this.optedOut) posthog.opt_out_capturing()
     } catch (error) {
       console.error('PostHog reset failed:', error)
     }
   }
 
-  // reset() clears PostHog's stored consent, so it must run before opt_out_capturing()
   optOut() {
+    this.optedOut = true
     this.reset()
-    if (!this.initStarted) return
-
-    try {
-      posthog.opt_out_capturing()
-    } catch (error) {
-      console.error('PostHog opt out failed:', error)
-    }
   }
 
   optIn() {
+    this.optedOut = false
     if (!this.initStarted) return
 
     try {

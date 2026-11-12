@@ -9,6 +9,9 @@ const TRACKING_COOKIE_NAMES = ['_ga', 'FPID', 'FPAU', 'FPLC', '_dcid']
 const isTrackingCookie = (name: string) =>
   TRACKING_COOKIE_NAMES.includes(name) ||
   name.startsWith('_ga_') ||
+  name.startsWith('_gcl_') ||
+  name.startsWith('_gac_') ||
+  name.startsWith('FPGCL') ||
   (name.startsWith('ph_') && name.endsWith('_posthog'))
 
 // Left in place, these make detectPriorConsent restore the pre-revoke accept on the next load
@@ -182,11 +185,11 @@ export const consentState = proxy({
 
     consentState.hasConsented = true
     consentState.showConsentToast = false
-    posthogClient.optIn()
 
     consentState.UC.acceptAllServices()
       .then(() => {
         consentState.categories = consentState.UC?.getCategoriesBaseInfo() ?? null
+        posthogClient.optIn()
       })
       .catch(() => {
         consentState.hasConsented = previousConsentValue
@@ -194,14 +197,14 @@ export const consentState = proxy({
       })
   },
   denyAll: () => {
-    if (!consentState.UC) return
+    if (!consentState.UC) return Promise.resolve()
     const previousConsentValue = consentState.hasConsented
 
     consentState.hasConsented = false
     consentState.showConsentToast = false
     revokeTrackingConsent()
 
-    consentState.UC.denyAllServices()
+    return consentState.UC.denyAllServices()
       .then(() => {
         consentState.categories = consentState.UC?.getCategoriesBaseInfo() ?? null
       })

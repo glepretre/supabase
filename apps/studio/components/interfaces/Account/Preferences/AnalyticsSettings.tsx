@@ -24,7 +24,7 @@ export const AnalyticsSettings = () => {
   const { hasAccepted, acceptAll, denyAll, categories } = useConsentState()
   const hasLoaded = categories !== null
 
-  const { mutate: sendReset } = useSendResetMutation()
+  const { mutateAsync: sendReset } = useSendResetMutation()
 
   const form = useForm<z.infer<typeof AnalyticsSchema>>({
     resolver: zodResolver(AnalyticsSchema),
@@ -43,8 +43,7 @@ export const AnalyticsSettings = () => {
     if (value) {
       acceptAll()
     } else {
-      denyAll()
-      sendReset()
+      Promise.allSettled([denyAll(), sendReset()]).then(() => window.location.reload())
     }
 
     form.setValue('telemetryEnabled', value)

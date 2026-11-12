@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+// @vitest-environment-options {"url": "https://www.supabase.com/"}
 import type { UserDecision } from '@usercentrics/cmp-browser-sdk'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -469,6 +470,7 @@ const cookieNames = () =>
 const clearCookies = () =>
   cookieNames().forEach((name) => {
     document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`
+    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=.supabase.com`
   })
 
 describe('revokeTrackingConsent', () => {
@@ -486,6 +488,10 @@ describe('revokeTrackingConsent', () => {
       'FPAU',
       'FPLC',
       '_dcid',
+      '_gcl_au',
+      '_gcl_aw',
+      '_gac_UA-1',
+      'FPGCLAW',
       'ph_phc_abc123_posthog',
       '_sb_first_referrer',
       'unrelated',
@@ -496,6 +502,15 @@ describe('revokeTrackingConsent', () => {
     revokeTrackingConsent()
 
     expect(cookieNames()).toEqual(['_sb_first_referrer', 'unrelated'])
+  })
+
+  it('clears cookies set on the shared .supabase.com domain', () => {
+    document.cookie = '_ga=1; path=/; domain=.supabase.com'
+    document.cookie = 'ph_phc_abc123_posthog=1; path=/; domain=.supabase.com'
+
+    revokeTrackingConsent()
+
+    expect(cookieNames()).toEqual([])
   })
 
   it('removes PostHog persistence and the GTM consent copy from localStorage', () => {
@@ -598,6 +613,29 @@ describe('consent withdrawal call sites', () => {
 
     expect(posthogClient.optOut).not.toHaveBeenCalled()
     expect(reload).not.toHaveBeenCalled()
+  })
+
+  it('acceptAll opts PostHog back in once the decision is saved', async () => {
+    const UC = makeUC(true)
+    consentState.UC = UC as never
+    consentState.hasConsented = false
+
+    consentState.acceptAll()
+    await vi.waitFor(() => expect(posthogClient.optIn).toHaveBeenCalledOnce())
+
+    expect(posthogClient.optOut).not.toHaveBeenCalled()
+  })
+
+  it('acceptAll does not opt PostHog back in when saving fails', async () => {
+    const UC = makeUC(true)
+    UC.acceptAllServices.mockImplementation(() => Promise.reject(new Error('network')))
+    consentState.UC = UC as never
+    consentState.hasConsented = false
+
+    consentState.acceptAll()
+    await vi.waitFor(() => expect(consentState.hasConsented).toBe(false))
+
+    expect(posthogClient.optIn).not.toHaveBeenCalled()
   })
 
   it('updateServices leaves consent untouched when saving fails', async () => {
