@@ -28,12 +28,6 @@ export const useConsentToast = () => {
 
     snap.denyAll()
 
-    // Clear GA4 and sGTM tracking cookies
-    const trackingCookies = ['_ga', '_ga_XW18KGKGNR', 'FPID', 'FPAU', 'FPLC']
-    trackingCookies.forEach((name) => {
-      document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/; domain=.supabase.com`
-    })
-
     if (consentToastId.current) {
       toast.dismiss(consentToastId.current)
     }

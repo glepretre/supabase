@@ -2,7 +2,17 @@
 import type { UserDecision } from '@usercentrics/cmp-browser-sdk'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { applyPriorDecisionToSDK, consentState, detectPriorConsent } from './consent-state'
+import {
+  applyPriorDecisionToSDK,
+  consentState,
+  detectPriorConsent,
+  revokeTrackingConsent,
+} from './consent-state'
+import { posthogClient } from './posthog-client'
+
+vi.mock('./posthog-client', () => ({
+  posthogClient: { optOut: vi.fn(), optIn: vi.fn() },
+}))
 
 // jsdom's localStorage can be flaky in vitest, so ensure it's available
 const storage = new Map<string, string>()
@@ -446,5 +456,160 @@ describe('applyPriorDecisionToSDK', () => {
 
     expect(UC.updateServices).not.toHaveBeenCalled()
     expect(consentState.hasConsented).toBe(true)
+  })
+})
+
+const cookieNames = () =>
+  document.cookie
+    .split(';')
+    .map((c) => c.split('=')[0].trim())
+    .filter(Boolean)
+    .sort()
+
+const clearCookies = () =>
+  cookieNames().forEach((name) => {
+    document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`
+  })
+
+describe('revokeTrackingConsent', () => {
+  beforeEach(() => {
+    clearCookies()
+    vi.clearAllMocks()
+  })
+
+  it('clears GA, sGTM, Google Ads, and PostHog cookies and keeps the rest', () => {
+    ;[
+      '_ga',
+      '_ga_XW18KGKGNR',
+      '_ga_OTHER123',
+      'FPID',
+      'FPAU',
+      'FPLC',
+      '_dcid',
+      'ph_phc_abc123_posthog',
+      '_sb_first_referrer',
+      'unrelated',
+    ].forEach((name) => {
+      document.cookie = `${name}=1; path=/`
+    })
+
+    revokeTrackingConsent()
+
+    expect(cookieNames()).toEqual(['_sb_first_referrer', 'unrelated'])
+  })
+
+  it('removes PostHog persistence and the GTM consent copy from localStorage', () => {
+    storage.set('ph_phc_abc123_posthog', '{}')
+    storage.set('ucData', '{}')
+    storage.set('ucString', 'x')
+    storage.set('uc_settings', '{}')
+    storage.set('__ph_opt_in_out_phc_abc123', '0')
+
+    revokeTrackingConsent()
+
+    expect(Array.from(storage.keys()).sort()).toEqual(['__ph_opt_in_out_phc_abc123', 'uc_settings'])
+  })
+
+  it('opts PostHog out', () => {
+    revokeTrackingConsent()
+    expect(posthogClient.optOut).toHaveBeenCalledOnce()
+  })
+})
+
+describe('consent withdrawal call sites', () => {
+  const reload = vi.fn()
+  const originalLocation = window.location
+
+  const makeUC = (areAllAccepted: boolean) => ({
+    acceptAllServices: vi.fn(() => Promise.resolve()),
+    denyAllServices: vi.fn(() => Promise.resolve()),
+    updateServices: vi.fn(() => Promise.resolve()),
+    getCategoriesBaseInfo: vi.fn(() => []),
+    areAllConsentsAccepted: vi.fn(() => areAllAccepted),
+  })
+
+  beforeEach(() => {
+    clearCookies()
+    vi.clearAllMocks()
+    consentState.showConsentToast = false
+    Object.defineProperty(window, 'location', {
+      value: { ...originalLocation, reload },
+      writable: true,
+      configurable: true,
+    })
+  })
+
+  afterEach(() => {
+    Object.defineProperty(window, 'location', {
+      value: originalLocation,
+      writable: true,
+      configurable: true,
+    })
+  })
+
+  it('denyAll clears tracking cookies and opts PostHog out without reloading', async () => {
+    const UC = makeUC(false)
+    consentState.UC = UC as never
+    consentState.hasConsented = true
+    document.cookie = '_ga=1; path=/'
+
+    consentState.denyAll()
+    await Promise.resolve()
+
+    expect(cookieNames()).toEqual([])
+    expect(posthogClient.optOut).toHaveBeenCalledOnce()
+    expect(UC.denyAllServices).toHaveBeenCalledOnce()
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  it('updateServices revokes and reloads after saving an opt-out', async () => {
+    const UC = makeUC(false)
+    consentState.UC = UC as never
+    consentState.hasConsented = true
+    document.cookie = '_ga_XW18KGKGNR=1; path=/'
+
+    consentState.updateServices([{ serviceId: 'ga', status: false }])
+    expect(reload).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce())
+
+    expect(consentState.hasConsented).toBe(false)
+    expect(cookieNames()).toEqual([])
+    expect(posthogClient.optOut).toHaveBeenCalledOnce()
+  })
+
+  it('updateServices revokes without reloading when tracking was already off', async () => {
+    const UC = makeUC(false)
+    consentState.UC = UC as never
+    consentState.hasConsented = false
+
+    consentState.updateServices([{ serviceId: 'ga', status: false }])
+    await vi.waitFor(() => expect(posthogClient.optOut).toHaveBeenCalledOnce())
+
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  it('updateServices opts PostHog back in when every service is accepted', async () => {
+    const UC = makeUC(true)
+    consentState.UC = UC as never
+    consentState.hasConsented = false
+
+    consentState.updateServices([{ serviceId: 'ga', status: true }])
+    await vi.waitFor(() => expect(posthogClient.optIn).toHaveBeenCalledOnce())
+
+    expect(posthogClient.optOut).not.toHaveBeenCalled()
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  it('updateServices leaves consent untouched when saving fails', async () => {
+    const UC = makeUC(false)
+    UC.updateServices.mockImplementation(() => Promise.reject(new Error('network')))
+    consentState.UC = UC as never
+    consentState.hasConsented = true
+
+    consentState.updateServices([{ serviceId: 'ga', status: false }])
+    await vi.waitFor(() => expect(consentState.showConsentToast).toBe(true))
+
+    expect(posthogClient.optOut).not.toHaveBeenCalled()
+    expect(reload).not.toHaveBeenCalled()
   })
 })

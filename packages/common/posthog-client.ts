@@ -149,6 +149,8 @@ class PostHogClient {
 
     this.initStarted = true
     posthog.init(this.config.apiKey, config)
+    // init() only runs with consent, so clear any opt-out left by an earlier revoke
+    this.optIn()
 
     // Register any feature flag callbacks that were queued before init
     this.pendingFeatureFlagCallbacks.forEach((cb) => posthog.onFeatureFlags(cb))
@@ -244,6 +246,30 @@ class PostHogClient {
       posthog.reset()
     } catch (error) {
       console.error('PostHog reset failed:', error)
+    }
+  }
+
+  // reset() clears PostHog's stored consent, so it must run before opt_out_capturing()
+  optOut() {
+    this.reset()
+    if (!this.initStarted) return
+
+    try {
+      posthog.opt_out_capturing()
+    } catch (error) {
+      console.error('PostHog opt out failed:', error)
+    }
+  }
+
+  optIn() {
+    if (!this.initStarted) return
+
+    try {
+      if (posthog.has_opted_out_capturing()) {
+        posthog.opt_in_capturing({ captureEventName: false })
+      }
+    } catch (error) {
+      console.error('PostHog opt in failed:', error)
     }
   }
 

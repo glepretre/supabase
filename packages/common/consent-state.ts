@@ -3,6 +3,41 @@ import type { BaseCategory, UserDecision } from '@usercentrics/cmp-browser-sdk'
 import { proxy, ref, snapshot, useSnapshot } from 'valtio'
 
 import { IS_PLATFORM, LOCAL_STORAGE_KEYS } from './constants'
+import { posthogClient } from './posthog-client'
+
+const TRACKING_COOKIE_NAMES = ['_ga', 'FPID', 'FPAU', 'FPLC', '_dcid']
+const isTrackingCookie = (name: string) =>
+  TRACKING_COOKIE_NAMES.includes(name) ||
+  name.startsWith('_ga_') ||
+  (name.startsWith('ph_') && name.endsWith('_posthog'))
+
+// Left in place, these make detectPriorConsent restore the pre-revoke accept on the next load
+const STALE_CONSENT_STORAGE_KEYS = ['ucData', 'ucString']
+
+/** Clears GA, server-side GTM, and PostHog cookies, and PostHog's stored identity. */
+export function revokeTrackingConsent() {
+  if (typeof document === 'undefined') return
+
+  posthogClient.optOut()
+
+  document.cookie
+    .split(';')
+    .map((cookie) => cookie.split('=')[0].trim())
+    .filter(isTrackingCookie)
+    .forEach((name) => {
+      const expired = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`
+      document.cookie = `${expired}; domain=.supabase.com`
+      document.cookie = expired
+    })
+
+  try {
+    const keys = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i))
+    keys
+      .filter((key): key is string => !!key?.startsWith('ph_') && key.endsWith('_posthog'))
+      .concat(STALE_CONSENT_STORAGE_KEYS)
+      .forEach((key) => localStorage.removeItem(key))
+  } catch {}
+}
 
 export type PriorConsentDecision =
   | null
@@ -147,6 +182,7 @@ export const consentState = proxy({
 
     consentState.hasConsented = true
     consentState.showConsentToast = false
+    posthogClient.optIn()
 
     consentState.UC.acceptAllServices()
       .then(() => {
@@ -163,6 +199,7 @@ export const consentState = proxy({
 
     consentState.hasConsented = false
     consentState.showConsentToast = false
+    revokeTrackingConsent()
 
     consentState.UC.denyAllServices()
       .then(() => {
@@ -175,12 +212,22 @@ export const consentState = proxy({
   updateServices: (decisions: UserDecision[]) => {
     if (!consentState.UC) return
 
+    const previousConsentValue = consentState.hasConsented
     consentState.showConsentToast = false
 
     consentState.UC.updateServices(decisions)
       .then(() => {
         consentState.hasConsented = consentState.UC?.areAllConsentsAccepted() ?? false
         consentState.categories = consentState.UC?.getCategoriesBaseInfo() ?? null
+
+        if (consentState.hasConsented) {
+          posthogClient.optIn()
+          return
+        }
+
+        revokeTrackingConsent()
+        // GTM keeps running after its script unmounts; only a reload stops it in this tab
+        if (previousConsentValue) window.location.reload()
       })
       .catch(() => {
         consentState.showConsentToast = true
