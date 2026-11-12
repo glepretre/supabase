@@ -1,6 +1,7 @@
 import pricingAddOn from '~/data/PricingAddOnTable.json'
 import { Plus, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { AnimatePresence, motion, MotionConfig } from 'motion/react'
+import { useCallback, useEffect, useState, type PointerEvent, type ReactNode } from 'react'
 import { plans as allPlans } from 'shared-data/plans'
 import { Button, cn, Slider, ToggleGroup, ToggleGroupItem } from 'ui'
 import { ComputeBadge } from 'ui-patterns/ComputeBadge'
@@ -10,8 +11,18 @@ const STANDALONE_PLANS = allPlans
   .filter((plan) => plan.planId === 'pro' || plan.planId === 'team')
   .map((plan) => ({ name: plan.name, price: plan.priceMonthly as number }))
 
+const TICKS_PER_STEP = 4
+
+const ROLL_VARIANTS = {
+  enter: { y: '100%', opacity: 0 },
+  center: { y: 0, opacity: 1 },
+  exit: { y: '-100%', opacity: 0 },
+}
+
 const findInstanceValueByColumn = (instance: any, column: string) =>
   instance.columns?.find((col: any) => col.key === column)?.value
+
+const formatUsd = (amount: number) => `$${amount.toLocaleString('en-US')}`
 
 const parsePrice = (price: string) => {
   const n = parseInt(price?.toString().replace('$', '').replace(',', ''), 10)
@@ -50,10 +61,8 @@ const ComputePricingCalculator = ({
   const [activePrice, setActivePrice] = useState(
     effectivePlan.price + priceSteps[0] - COMPUTE_CREDITS
   )
-  const [hasInteractedWithSlider, setHasInteractedWithSlider] = useState(false)
 
   const handleUpdateInstance = (position: number, value: number[]) => {
-    setHasInteractedWithSlider(true)
     const newArray = activeInstances.map((activeInstance) => {
       // only update the instance corresponding to the correct slider
       if (activeInstance.position === position) {
@@ -90,6 +99,16 @@ const ComputePricingCalculator = ({
 
     setActiveInstances(newArray)
   }
+
+  const [stepPreview, setStepPreview] = useState<{ position: number; step: number } | null>(null)
+
+  const handleStepPreview = (position: number) => (step: number | null) =>
+    setStepPreview(step === null ? null : { position, step })
+
+  const getDisplayedInstance = (activeInstance: any) =>
+    stepPreview !== null && stepPreview.position === activeInstance.position
+      ? computeInstances[stepPreview.step]
+      : activeInstance
 
   const findSliderComputeValue = (activeInstance: any) => {
     // find index of compute based on active compute name
@@ -131,37 +150,41 @@ const ComputePricingCalculator = ({
         )}
         <div>
           <p className="text-foreground-light text-xs mb-2">Monthly estimate:</p>
-          <div className="flex flex-col gap-1 text-lighter text-right leading-4 w-full border-b pb-1 mb-1">
+          <div className="flex flex-col gap-2 text-lighter text-right leading-4 w-full border-b pb-2 mb-2 tabular-nums">
             <div className="flex items-center justify-between">
               <span className="text-foreground-muted">Plan subscription</span>
-              <span className="text-light font-mono" translate="no">
-                ${effectivePlan.price}
+              <span className="text-light" translate="no">
+                {formatUsd(effectivePlan.price)}
               </span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-foreground-muted">Total Compute</span>
-              <span className="text-light font-mono">${calculateComputeAggregate(0)}</span>
+              <span className="text-light" translate="no">
+                {formatUsd(calculateComputeAggregate(0))}
+              </span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-foreground-muted">Compute Credits</span>
-              <span className="text-light font-mono" translate="no">
-                - ${COMPUTE_CREDITS}
+              <span className="text-light" translate="no">
+                −{formatUsd(COMPUTE_CREDITS)}
               </span>
             </div>
           </div>
-          <div className="flex items-center gap-1 w-full justify-between">
-            <span>Total</span>
-            <span className="text-foreground font-mono flex items-center gap-1">
+          <div className="flex items-center gap-1 w-full justify-between font-medium">
+            <span className="flex items-center gap-1">
+              Total
               <InfoTooltip side="top" className="max-w-[250px]" label="About this estimate">
                 This estimate only includes Plan and Compute add-on monthly costs. Other resources
                 might incur additional costs in the final invoice.
               </InfoTooltip>
-              ${activePrice}
+            </span>
+            <span role="status" className="text-foreground tabular-nums" translate="no">
+              {formatUsd(activePrice)}
             </span>
           </div>
         </div>
       </div>
-      <div className="flex flex-col gap-2 col-span-3 items-start flex-1 w-full lg:w-auto lg:border-l lg:pl-4">
+      <div className="flex flex-col gap-2 col-span-3 items-start flex-1 w-full lg:w-auto lg:pl-4">
         <div
           className={cn(
             'w-full flex flex-col items-start gap-y-2',
@@ -170,28 +193,45 @@ const ComputePricingCalculator = ({
         >
           {activeInstances.map((activeInstance, index) => (
             <div
-              className="group w-full flex flex-col gap-3 p-3 bg-surface-200 rounded-sm border"
+              className="group w-full flex flex-col gap-3 p-3 bg-surface-200 rounded-md border"
               key={`instance-${index}`}
             >
               <div className="w-full flex justify-between items-center">
                 <div className="flex items-center gap-2">
-                  <ComputeBadge
-                    infraComputeSize={findInstanceValueByColumn(activeInstance, 'plan')}
-                  />
                   <p className="text-xs text-foreground-lighter">
                     Project {activeInstance.position + 1}
                   </p>
+                  <ComputeBadge
+                    infraComputeSize={findInstanceValueByColumn(
+                      getDisplayedInstance(activeInstance),
+                      'plan'
+                    )}
+                  >
+                    <RollingValue
+                      value={findInstanceValueByColumn(
+                        getDisplayedInstance(activeInstance),
+                        'plan'
+                      )}
+                    >
+                      {findInstanceValueByColumn(getDisplayedInstance(activeInstance), 'plan')}
+                    </RollingValue>
+                  </ComputeBadge>
                 </div>
-                <span className="leading-3 text-sm" translate="no">
-                  {findInstanceValueByColumn(activeInstance, 'pricing')}
+                <span className="leading-3 text-sm tabular-nums" translate="no">
+                  $
+                  <RollingNumber
+                    value={findInstanceValueByColumn(
+                      getDisplayedInstance(activeInstance),
+                      'pricing'
+                    ).replace('$', '')}
+                  />
                 </span>
               </div>
-              <div className="w-full relative">
-                {!hasInteractedWithSlider && (
-                  <label className="absolute -top-2 left-6 text-xs text-foreground-muted pointer-events-none bg-surface-300 px-1 py-0.5 rounded-md z-10 flex items-center gap-1">
-                    Drag to adjust
-                  </label>
-                )}
+              <SliderSteps
+                stepCount={computeInstances.length}
+                onStepPreview={handleStepPreview(activeInstance.position)}
+                activeStep={findSliderComputeValue(activeInstance)[0] - 1}
+              >
                 <Slider
                   onValueChange={(value) => handleUpdateInstance(activeInstance.position, value)}
                   value={findSliderComputeValue(activeInstance)}
@@ -200,18 +240,28 @@ const ComputePricingCalculator = ({
                   max={priceSteps.length}
                   step={1}
                   className={cn(
-                    'w-full cursor-grab active:cursor-grabbing',
-                    !hasInteractedWithSlider && "**:data-[slot='slider-thumb']:animate-pulse"
+                    'w-full min-h-12 cursor-grab active:cursor-grabbing',
+                    "**:data-[slot='slider-track']:bg-transparent **:data-[slot='slider-range']:bg-transparent",
+                    "**:data-[slot='slider-thumb']:slider-split-thumb",
+                    "**:data-[slot='slider-thumb']:relative **:data-[slot='slider-thumb']:before:absolute **:data-[slot='slider-thumb']:before:-inset-y-2 **:data-[slot='slider-thumb']:before:-inset-x-3"
                   )}
                 />
-              </div>
+              </SliderSteps>
               <div className="flex items-center justify-between text-sm">
                 <div className="w-full flex items-center gap-2">
                   <span className="text-lighter text-xs md:text-[13px]">
-                    {findInstanceValueByColumn(activeInstance, 'memory')} RAM /{' '}
-                    {findInstanceValueByColumn(activeInstance, 'cpu')} / Connections: Direct{' '}
-                    {findInstanceValueByColumn(activeInstance, 'directConnections')}, Pooler{' '}
-                    {findInstanceValueByColumn(activeInstance, 'poolerConnections')}
+                    {findInstanceValueByColumn(getDisplayedInstance(activeInstance), 'memory')} RAM
+                    / {findInstanceValueByColumn(getDisplayedInstance(activeInstance), 'cpu')} /
+                    Connections: Direct{' '}
+                    {findInstanceValueByColumn(
+                      getDisplayedInstance(activeInstance),
+                      'directConnections'
+                    )}
+                    , Pooler{' '}
+                    {findInstanceValueByColumn(
+                      getDisplayedInstance(activeInstance),
+                      'poolerConnections'
+                    )}
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
@@ -251,5 +301,167 @@ const ComputePricingCalculator = ({
     </div>
   )
 }
+
+const SliderSteps = ({
+  stepCount,
+  activeStep,
+  onStepPreview,
+  children,
+}: {
+  stepCount: number
+  activeStep: number
+  onStepPreview: (step: number | null) => void
+  children: ReactNode
+}) => {
+  const [hoveredTick, setHoveredTick] = useState<number | null>(null)
+  const [isPointerFocus, setIsPointerFocus] = useState(false)
+  const lastStep = stepCount - 1
+  const tickCount = lastStep * TICKS_PER_STEP + 1
+  const hoveredStep = hoveredTick === null ? null : Math.round(hoveredTick / TICKS_PER_STEP)
+  const previewStep = hoveredStep === activeStep ? null : hoveredStep
+  const [sweep, setSweep] = useState({ from: activeStep, to: activeStep, id: 0 })
+
+  if (sweep.to !== activeStep) {
+    setSweep({ from: sweep.to, to: activeStep, id: sweep.id + 1 })
+  }
+
+  const handlePointerMove = (event: PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType !== 'mouse') return
+    const rect = event.currentTarget.getBoundingClientRect()
+    const ratio = Math.min(Math.max((event.clientX - rect.left) / rect.width, 0), 1)
+    const tick = Math.round(ratio * (tickCount - 1))
+    const step = Math.round(tick / TICKS_PER_STEP)
+    setHoveredTick(tick)
+    onStepPreview(step === activeStep ? null : step)
+  }
+
+  const handlePointerLeave = () => {
+    setHoveredTick(null)
+    onStepPreview(null)
+  }
+
+  const handlePointerDown = () => setIsPointerFocus(true)
+  const handleBlur = () => setIsPointerFocus(false)
+  const handleKeyDown = () => {
+    setIsPointerFocus(false)
+    setHoveredTick(null)
+    onStepPreview(null)
+  }
+
+  return (
+    <div
+      // radix focuses the thumb in code on press, so chrome can match :focus-visible after a click
+      className={cn(
+        'relative w-full',
+        isPointerFocus &&
+          "**:data-[slot='slider-thumb']:focus-visible:ring-0 **:data-[slot='slider-thumb']:focus-visible:ring-offset-0"
+      )}
+      onPointerMove={handlePointerMove}
+      onPointerLeave={handlePointerLeave}
+      onPointerDown={handlePointerDown}
+      onKeyDown={handleKeyDown}
+      onBlur={handleBlur}
+    >
+      {/* inset by half the thumb, as radix keeps the thumb inside the track */}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 inset-x-0.75">
+        {Array.from({ length: tickCount }, (_, tick) => {
+          const step = tick / TICKS_PER_STEP
+          const isStep = Number.isInteger(step)
+          const hoverDistance = hoveredTick === null ? Infinity : Math.abs(tick - hoveredTick)
+          const sweepProgress = (step - sweep.from) / (sweep.to - sweep.from)
+          const isSwept = sweepProgress > 0 && sweepProgress < 1
+          const activeDistance = Math.abs(tick - activeStep * TICKS_PER_STEP)
+          const nearest = Math.min(hoverDistance, activeDistance)
+          const growth = nearest <= 3 && step !== activeStep ? 1 + (4 - nearest) * 0.2 : 1
+
+          return (
+            <span
+              // a new key restarts the pass animation on every selection change
+              key={isSwept ? `${tick}-${sweep.id}` : tick}
+              className={cn(
+                'absolute top-1/2 -translate-1/2',
+                'motion-safe:transition-[scale,height,opacity] motion-safe:duration-150 motion-safe:ease-out',
+                isStep ? 'w-1 split-line-sm text-foreground' : 'h-3 w-px bg-foreground',
+                isSwept &&
+                  (isStep ? 'motion-safe:animate-step-pass' : 'motion-safe:animate-tick-pass')
+              )}
+              style={{
+                animationDelay: isSwept ? `${sweepProgress * 150}ms` : undefined,
+                left: `${(step / lastStep) * 100}%`,
+                opacity:
+                  step === activeStep
+                    ? 0
+                    : step === previewStep
+                      ? 1
+                      : Math.max(
+                          isStep ? 0.3 : 0.12,
+                          1 - hoverDistance * 0.2,
+                          1 - activeDistance * 0.2
+                        ),
+                // steps grow in height, not scale, so the gap keeps its size
+                height: isStep ? `${Math.min(26 * growth, 32)}px` : undefined,
+                scale: isStep ? undefined : `1 ${growth}`,
+              }}
+            />
+          )
+        })}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+const RollingValue = ({
+  value,
+  delay = 0,
+  children,
+}: {
+  value: string
+  delay?: number
+  children: ReactNode
+}) => {
+  const [width, setWidth] = useState<number>()
+  const measureRef = useCallback((node: HTMLSpanElement | null) => {
+    if (node) setWidth(node.offsetWidth)
+  }, [])
+
+  return (
+    <MotionConfig reducedMotion="user">
+      <span
+        className="relative inline-grid overflow-hidden transition-[width] duration-300 ease-out motion-reduce:transition-none"
+        style={{ width }}
+      >
+        <AnimatePresence mode="popLayout" initial={false}>
+          <motion.span
+            key={value}
+            ref={measureRef}
+            variants={ROLL_VARIANTS}
+            initial="enter"
+            animate="center"
+            exit="exit"
+            transition={{ type: 'spring', duration: 0.3, bounce: 0, delay }}
+            className="inline-flex w-max"
+          >
+            {children}
+          </motion.span>
+        </AnimatePresence>
+      </span>
+    </MotionConfig>
+  )
+}
+
+const RollingNumber = ({ value }: { value: string }) => (
+  <>
+    <span className="sr-only">{value}</span>
+    <span aria-hidden="true" className="inline-flex">
+      {value.split('').map((char, index, chars) => (
+        // key by place from the right, so unchanged trailing digits keep their slot and do not roll
+        <RollingValue key={chars.length - index} value={char} delay={index * 0.03}>
+          {char}
+        </RollingValue>
+      ))}
+    </span>
+  </>
+)
 
 export default ComputePricingCalculator
