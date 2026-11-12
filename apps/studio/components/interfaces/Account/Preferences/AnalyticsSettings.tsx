@@ -16,6 +16,8 @@ import * as z from 'zod'
 
 import { useSendResetMutation } from '@/data/telemetry/send-reset-mutation'
 
+const RESET_WAIT_MS = 3000
+
 const AnalyticsSchema = z.object({
   telemetryEnabled: z.boolean(),
 })
@@ -43,7 +45,13 @@ export const AnalyticsSettings = () => {
     if (value) {
       acceptAll()
     } else {
-      Promise.allSettled([denyAll(), sendReset()]).then(() => window.location.reload())
+      const resetSettled = Promise.race([
+        sendReset().catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, RESET_WAIT_MS)),
+      ])
+      Promise.all([denyAll(), resetSettled]).then(([isSaved]) => {
+        if (isSaved) window.location.reload()
+      })
     }
 
     form.setValue('telemetryEnabled', value)

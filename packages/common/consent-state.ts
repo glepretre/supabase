@@ -196,20 +196,23 @@ export const consentState = proxy({
         consentState.showConsentToast = true
       })
   },
-  denyAll: () => {
-    if (!consentState.UC) return Promise.resolve()
+  /** Resolves to whether the opt-out was saved. */
+  denyAll: (): Promise<boolean> => {
+    if (!consentState.UC) return Promise.resolve(false)
     const previousConsentValue = consentState.hasConsented
 
     consentState.hasConsented = false
     consentState.showConsentToast = false
-    revokeTrackingConsent()
 
     return consentState.UC.denyAllServices()
       .then(() => {
         consentState.categories = consentState.UC?.getCategoriesBaseInfo() ?? null
+        revokeTrackingConsent()
+        return true
       })
       .catch(() => {
         consentState.showConsentToast = previousConsentValue
+        return false
       })
   },
   updateServices: (decisions: UserDecision[]) => {

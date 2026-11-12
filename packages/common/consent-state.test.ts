@@ -568,13 +568,25 @@ describe('consent withdrawal call sites', () => {
     consentState.hasConsented = true
     document.cookie = '_ga=1; path=/'
 
-    consentState.denyAll()
-    await Promise.resolve()
+    await expect(consentState.denyAll()).resolves.toBe(true)
 
     expect(cookieNames()).toEqual([])
     expect(posthogClient.optOut).toHaveBeenCalledOnce()
     expect(UC.denyAllServices).toHaveBeenCalledOnce()
     expect(reload).not.toHaveBeenCalled()
+  })
+
+  it('denyAll keeps tracking state and reports failure when saving fails', async () => {
+    const UC = makeUC(false)
+    UC.denyAllServices.mockImplementation(() => Promise.reject(new Error('network')))
+    consentState.UC = UC as never
+    consentState.hasConsented = true
+    document.cookie = '_ga=1; path=/'
+
+    await expect(consentState.denyAll()).resolves.toBe(false)
+
+    expect(cookieNames()).toEqual(['_ga'])
+    expect(posthogClient.optOut).not.toHaveBeenCalled()
   })
 
   it('updateServices revokes and reloads after saving an opt-out', async () => {
