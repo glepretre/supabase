@@ -493,6 +493,7 @@ describe('revokeTrackingConsent', () => {
       '_gac_UA-1',
       'FPGCLAW',
       'ph_phc_abc123_posthog',
+      'session_id',
       '_sb_first_referrer',
       'unrelated',
     ].forEach((name) => {
@@ -562,17 +563,42 @@ describe('consent withdrawal call sites', () => {
     })
   })
 
-  it('denyAll clears tracking cookies and opts PostHog out without reloading', async () => {
+  it('denyAll clears tracking cookies, opts PostHog out, and leaves the reload to the caller', async () => {
     const UC = makeUC(false)
     consentState.UC = UC as never
     consentState.hasConsented = true
     document.cookie = '_ga=1; path=/'
+    document.cookie = 'session_id=abc; path=/'
 
     await expect(consentState.denyAll()).resolves.toBe(true)
 
     expect(cookieNames()).toEqual([])
     expect(posthogClient.optOut).toHaveBeenCalledOnce()
     expect(UC.denyAllServices).toHaveBeenCalledOnce()
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  it('denyAll with reload revokes and reloads after saving an opt-out (consent toast)', async () => {
+    const UC = makeUC(false)
+    consentState.UC = UC as never
+    consentState.hasConsented = true
+    document.cookie = '_ga=1; path=/'
+
+    await expect(consentState.denyAll({ reload: true })).resolves.toBe(true)
+
+    expect(cookieNames()).toEqual([])
+    expect(posthogClient.optOut).toHaveBeenCalledOnce()
+    expect(reload).toHaveBeenCalledOnce()
+  })
+
+  it('denyAll with reload does not reload when tracking was already off', async () => {
+    const UC = makeUC(false)
+    consentState.UC = UC as never
+    consentState.hasConsented = false
+
+    await expect(consentState.denyAll({ reload: true })).resolves.toBe(true)
+
+    expect(posthogClient.optOut).toHaveBeenCalledOnce()
     expect(reload).not.toHaveBeenCalled()
   })
 

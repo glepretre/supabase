@@ -5,7 +5,7 @@ import { proxy, ref, snapshot, useSnapshot } from 'valtio'
 import { IS_PLATFORM, LOCAL_STORAGE_KEYS } from './constants'
 import { posthogClient } from './posthog-client'
 
-const TRACKING_COOKIE_NAMES = ['_ga', 'FPID', 'FPAU', 'FPLC', '_dcid']
+const TRACKING_COOKIE_NAMES = ['_ga', 'FPID', 'FPAU', 'FPLC', '_dcid', 'session_id']
 const isTrackingCookie = (name: string) =>
   TRACKING_COOKIE_NAMES.includes(name) ||
   name.startsWith('_ga_') ||
@@ -17,7 +17,7 @@ const isTrackingCookie = (name: string) =>
 // Left in place, these make detectPriorConsent restore the pre-revoke accept on the next load
 const STALE_CONSENT_STORAGE_KEYS = ['ucData', 'ucString']
 
-/** Clears GA, server-side GTM, and PostHog cookies, and PostHog's stored identity. */
+/** Clears GA, server-side GTM, PostHog, and telemetry session cookies, and PostHog's stored identity. */
 export function revokeTrackingConsent() {
   if (typeof document === 'undefined') return
 
@@ -196,8 +196,11 @@ export const consentState = proxy({
         consentState.showConsentToast = true
       })
   },
-  /** Resolves to whether the opt-out was saved. */
-  denyAll: (): Promise<boolean> => {
+  /**
+   * Resolves to whether the opt-out was saved. Pass `reload` to reload the page after a saved
+   * opt-out that withdrew consent, unless the caller reloads itself.
+   */
+  denyAll: ({ reload = false }: { reload?: boolean } = {}): Promise<boolean> => {
     if (!consentState.UC) return Promise.resolve(false)
     const previousConsentValue = consentState.hasConsented
 
@@ -208,6 +211,8 @@ export const consentState = proxy({
       .then(() => {
         consentState.categories = consentState.UC?.getCategoriesBaseInfo() ?? null
         revokeTrackingConsent()
+        // GTM keeps running after its script unmounts; only a reload stops it in this tab
+        if (reload && previousConsentValue) window.location.reload()
         return true
       })
       .catch(() => {

@@ -26,7 +26,7 @@ export const useConsentToast = () => {
   const denyAll = useCallback(() => {
     if (!isBrowser) return
 
-    snap.denyAll()
+    snap.denyAll({ reload: true })
 
     if (consentToastId.current) {
       toast.dismiss(consentToastId.current)
